@@ -18,12 +18,35 @@ import {
   normalizeRoots,
   renderSelectedPolicyText,
   selectedRootsOf,
+  selectionOf,
+  tempWritableRoots,
   workspaceWritableRoots,
 } from "../lib/core.js";
 
 test("MODE and SELECTION_EVENT are the plugin vocabulary", () => {
   assert.equal(MODE, "selected-workspace-write");
   assert.equal(SELECTION_EVENT, "workspace-scope/selection");
+});
+
+test("selectionOf folds the whole scope (roots + workspace) last-wins", () => {
+  const events = [
+    { type: SELECTION_EVENT, data: { roots: ["/a"], workspace: false } },
+    { type: "turn/start", data: {} },
+    { type: SELECTION_EVENT, data: { roots: ["/c"] } },
+  ];
+  assert.deepEqual(selectionOf(events), { roots: ["/c"], workspace: true });
+  assert.deepEqual(
+    selectionOf([{ type: SELECTION_EVENT, data: { roots: ["/x"], workspace: false } }]),
+    { roots: ["/x"], workspace: false },
+  );
+  assert.deepEqual(selectionOf([{ type: "turn/end", data: {} }]), { roots: [], workspace: true });
+  assert.deepEqual(selectionOf([]), { roots: [], workspace: true });
+  // Legacy events without the workspace field stay workspace-writable.
+  assert.deepEqual(
+    selectionOf([{ type: SELECTION_EVENT, data: { roots: ["/y"] } }]),
+    { roots: ["/y"], workspace: true },
+  );
+  assert.deepEqual(selectionOf([{ type: SELECTION_EVENT, data: { roots: "nope" } }]), { roots: [], workspace: true });
 });
 
 test("selectedRootsOf folds last-wins over the log", () => {
@@ -91,6 +114,14 @@ test("workspaceWritableRoots contains the workspace and the temp areas", () => {
   assert.equal(new Set(roots).size, roots.length);
 });
 
+test("tempWritableRoots excludes the workspace", () => {
+  const roots = tempWritableRoots();
+  assert.ok(roots.includes("/tmp"));
+  assert.ok(roots.includes(canonicalPath(tmpdir())));
+  assert.ok(!roots.includes(canonicalPath("/ws")));
+  assert.equal(new Set(roots).size, roots.length);
+});
+
 test("renderSelectedPolicyText names the roots only when present", () => {
   const empty = renderSelectedPolicyText({ mode: MODE, workspaceRoot: "/ws", extraWritableRoots: [] });
   assert.match(empty, /selected-workspace-write/);
@@ -98,6 +129,13 @@ test("renderSelectedPolicyText names the roots only when present", () => {
   assert.doesNotMatch(empty, /selected directories/);
   const withRoots = renderSelectedPolicyText({ mode: MODE, workspaceRoot: "/ws", extraWritableRoots: ["/data", "/notes"] });
   assert.match(withRoots, /\[\"\/data\",\"\/notes\"\]/);
+  // Workspace excluded from the selection: it is named as read-only.
+  const offEmpty = renderSelectedPolicyText({ mode: MODE, workspaceRoot: "/ws", extraWritableRoots: [], workspaceWritable: false });
+  assert.match(offEmpty, /read-only/);
+  const offWithRoots = renderSelectedPolicyText({ mode: MODE, workspaceRoot: "/ws", extraWritableRoots: ["/data"], workspaceWritable: false });
+  assert.match(offWithRoots, /\[\"\/data\"\]/);
+  assert.match(offWithRoots, /read-only/);
+  assert.doesNotMatch(offWithRoots, /under the session workspace/);
 });
 
 test("augmentConfinedArgv splices grants per dialect", () => {
@@ -139,6 +177,34 @@ test("augmentConfinedArgv splices grants per dialect", () => {
   // No separator: grants append at the end.
   const noSep = augmentConfinedArgv({ ...base, argv: ["bwrap", "--ro-bind", "/", "/"] }, ["/data"]);
   assert.deepEqual(noSep.argv, ["bwrap", "--ro-bind", "/", "/", "--bind", "/data", "/data"]);
+
+  // Workspace excluded (read-only base): temp areas + extra roots granted.
+  const offBwrap = augmentConfinedArgv(
+    { ...base, argv: ["bwrap", "--ro-bind", "/", "/", "--", "bash", "-c", "x"] },
+    ["/data"],
+    ["/tmp"],
+  );
+  assert.deepEqual(offBwrap.argv, [
+    "bwrap", "--ro-bind", "/", "/",
+    "--tmpfs", "/tmp", "--bind", "/data", "/data",
+    "--", "bash", "-c", "x",
+  ]);
+  const offLandlock = augmentConfinedArgv(
+    { ...base, argv: ["/opt/landlock-run", "--ro", "/", "--rw", "/dev/null", "--", "bash", "-c", "x"] },
+    ["/data"],
+    ["/tmp"],
+  );
+  assert.deepEqual(offLandlock.argv, [
+    "/opt/landlock-run", "--ro", "/", "--rw", "/dev/null",
+    "--rw", "/tmp", "--rw", "/data",
+    "--", "bash", "-c", "x",
+  ]);
+  const offSeatbelt = augmentConfinedArgv(
+    { ...base, argv: ["sandbox-exec", "-p", '(version 1)(allow default)(deny file-write*)(allow file-write* (literal "/dev/null"))', "--", "bash", "-c", "x"] },
+    ["/data"],
+    ["/tmp"],
+  );
+  assert.equal(offSeatbelt.argv[2], '(version 1)(allow default)(deny file-write*)(allow file-write* (subpath "/tmp") (subpath "/data") (literal "/dev/null"))');
 });
 
 test("ancestryCrumbs walks to the filesystem root", () => {
