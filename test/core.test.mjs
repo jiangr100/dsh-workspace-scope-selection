@@ -16,6 +16,7 @@ import {
   isPathUnder,
   listDirectoryLevel,
   normalizeRoots,
+  normalizeSelectionRoots,
   renderSelectedPolicyText,
   selectedRootsOf,
   selectionOf,
@@ -28,36 +29,57 @@ test("MODE and SELECTION_EVENT are the plugin vocabulary", () => {
   assert.equal(SELECTION_EVENT, "workspace-scope/selection");
 });
 
-test("selectionOf folds the whole scope (roots + workspace) last-wins", () => {
+test("selectionOf folds the whole scope (normalized roots + workspace marker) last-wins", () => {
+  // The folded roots ARE the writable set: the workspace root is a member
+  // exactly when the workspace is writable.
   const events = [
-    { type: SELECTION_EVENT, data: { roots: ["/a"], workspace: false } },
+    { type: SELECTION_EVENT, data: { roots: ["/ws", "/a"], workspaceRoot: "/ws", workspace: true } },
     { type: "turn/start", data: {} },
-    { type: SELECTION_EVENT, data: { roots: ["/c"] } },
+    { type: SELECTION_EVENT, data: { roots: ["/ws", "/c"], workspaceRoot: "/ws", workspace: true } },
   ];
-  assert.deepEqual(selectionOf(events), { roots: ["/c"], workspace: true });
+  assert.deepEqual(selectionOf(events), { roots: ["/ws", "/c"], workspace: true, workspaceRoot: "/ws" });
+  // workspace:false removes the workspace root from the selection.
   assert.deepEqual(
-    selectionOf([{ type: SELECTION_EVENT, data: { roots: ["/x"], workspace: false } }]),
-    { roots: ["/x"], workspace: false },
+    selectionOf([{ type: SELECTION_EVENT, data: { roots: ["/ws", "/x"], workspaceRoot: "/ws", workspace: false } }]),
+    { roots: ["/x"], workspace: false, workspaceRoot: "/ws" },
   );
-  assert.deepEqual(selectionOf([{ type: "turn/end", data: {} }]), { roots: [], workspace: true });
-  assert.deepEqual(selectionOf([]), { roots: [], workspace: true });
+  // An event that omits the workspace root still yields it when writable.
+  assert.deepEqual(
+    selectionOf([{ type: SELECTION_EVENT, data: { roots: ["/x"], workspaceRoot: "/ws", workspace: true } }]),
+    { roots: ["/ws", "/x"], workspace: true, workspaceRoot: "/ws" },
+  );
   // Legacy events without the workspace field stay workspace-writable.
   assert.deepEqual(
-    selectionOf([{ type: SELECTION_EVENT, data: { roots: ["/y"] } }]),
-    { roots: ["/y"], workspace: true },
+    selectionOf([{ type: SELECTION_EVENT, data: { roots: ["/y"], workspaceRoot: "/ws" } }]),
+    { roots: ["/ws", "/y"], workspace: true, workspaceRoot: "/ws" },
   );
-  assert.deepEqual(selectionOf([{ type: SELECTION_EVENT, data: { roots: "nope" } }]), { roots: [], workspace: true });
+  assert.deepEqual(selectionOf([{ type: "turn/end", data: {} }]), { roots: [], workspace: true, workspaceRoot: "" });
+  assert.deepEqual(selectionOf([]), { roots: [], workspace: true, workspaceRoot: "" });
+  assert.deepEqual(
+    selectionOf([{ type: SELECTION_EVENT, data: { roots: "nope", workspaceRoot: "/ws" } }]),
+    { roots: ["/ws"], workspace: true, workspaceRoot: "/ws" },
+  );
+});
+
+test("normalizeSelectionRoots makes the workspace an ordinary member", () => {
+  assert.deepEqual(normalizeSelectionRoots(["/ws", "/a"], "/ws", true), ["/ws", "/a"]);
+  assert.deepEqual(normalizeSelectionRoots(["/a"], "/ws", true), ["/ws", "/a"]);
+  assert.deepEqual(normalizeSelectionRoots(["/ws", "/a"], "/ws", false), ["/a"]);
+  assert.deepEqual(normalizeSelectionRoots([], "/ws", true), ["/ws"]);
+  assert.deepEqual(normalizeSelectionRoots([], "/ws", false), []);
+  assert.deepEqual(normalizeSelectionRoots(["/a"], "", true), ["/a"]);
+  assert.deepEqual(normalizeSelectionRoots("nope", "/ws", true), ["/ws"]);
 });
 
 test("selectedRootsOf folds last-wins over the log", () => {
   const events = [
     { type: "sandbox/mode", data: { mode: "workspace-write" } },
-    { type: SELECTION_EVENT, data: { roots: ["/a", "/b"] } },
+    { type: SELECTION_EVENT, data: { roots: ["/a", "/b"], workspaceRoot: "/ws" } },
     { type: "turn/start", data: {} },
-    { type: SELECTION_EVENT, data: { roots: ["/c"] } },
+    { type: SELECTION_EVENT, data: { roots: ["/c"], workspaceRoot: "/ws" } },
   ];
-  assert.deepEqual(selectedRootsOf(events), ["/c"]);
-  assert.deepEqual(selectedRootsOf([{ type: SELECTION_EVENT, data: { roots: ["/x"] } }]), ["/x"]);
+  assert.deepEqual(selectedRootsOf(events), ["/ws", "/c"]);
+  assert.deepEqual(selectedRootsOf([{ type: SELECTION_EVENT, data: { roots: ["/x"], workspaceRoot: "/ws" } }]), ["/ws", "/x"]);
   assert.deepEqual(selectedRootsOf([{ type: "turn/end", data: {} }]), []);
   assert.deepEqual(selectedRootsOf([]), []);
   // A malformed payload degrades to no selection, never a crash.
@@ -123,16 +145,17 @@ test("tempWritableRoots excludes the workspace", () => {
 });
 
 test("renderSelectedPolicyText names the roots only when present", () => {
-  const empty = renderSelectedPolicyText({ mode: MODE, workspaceRoot: "/ws", extraWritableRoots: [] });
+  // Workspace selected: named first, then the other selected directories.
+  const empty = renderSelectedPolicyText({ mode: MODE, workspaceRoot: "/ws", extraWritableRoots: ["/ws"] });
   assert.match(empty, /selected-workspace-write/);
   assert.match(empty, /"\/ws"/);
   assert.doesNotMatch(empty, /selected directories/);
-  const withRoots = renderSelectedPolicyText({ mode: MODE, workspaceRoot: "/ws", extraWritableRoots: ["/data", "/notes"] });
+  const withRoots = renderSelectedPolicyText({ mode: MODE, workspaceRoot: "/ws", extraWritableRoots: ["/ws", "/data", "/notes"] });
   assert.match(withRoots, /\[\"\/data\",\"\/notes\"\]/);
-  // Workspace excluded from the selection: it is named as read-only.
-  const offEmpty = renderSelectedPolicyText({ mode: MODE, workspaceRoot: "/ws", extraWritableRoots: [], workspaceWritable: false });
+  // Workspace excluded: it is not in the writable list and is read-only.
+  const offEmpty = renderSelectedPolicyText({ mode: MODE, workspaceRoot: "/ws", extraWritableRoots: [] });
   assert.match(offEmpty, /read-only/);
-  const offWithRoots = renderSelectedPolicyText({ mode: MODE, workspaceRoot: "/ws", extraWritableRoots: ["/data"], workspaceWritable: false });
+  const offWithRoots = renderSelectedPolicyText({ mode: MODE, workspaceRoot: "/ws", extraWritableRoots: ["/data"] });
   assert.match(offWithRoots, /\[\"\/data\"\]/);
   assert.match(offWithRoots, /read-only/);
   assert.doesNotMatch(offWithRoots, /under the session workspace/);
