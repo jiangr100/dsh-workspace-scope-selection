@@ -1,0 +1,52 @@
+{
+  "name": "dsh-workspace-scope-selection",
+  "version": "1.0.0",
+  "description": "A fourth permission option for DeepSeek Harness sessions: selected-workspace-write, where the user opens the workspace directory tree and toggles which directories the agent may write to.",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-api-remotes",
+        "@deepseek-ai/dsh-client-ui-slots"
+      ],
+      "platform": "web"
+    }
+  },
+  "peerDependencies": {
+    "react": "^18.2.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "sandbox",
+    "permission",
+    "workspace-scope"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jiangr100/dsh-workspace-scope-selection.git"
+  }
+}
