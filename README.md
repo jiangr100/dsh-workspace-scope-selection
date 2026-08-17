@@ -11,8 +11,11 @@ in addition to the workspace itself.
 
 - The composer permission chip and the `/permission` popup gain a fourth
   option, **Selected Workspace Write**.
-- When a session runs under that option, a dock bar appears above the
-  composer showing the current selection, with an **Edit scope** button.
+- Picking the option in the access chip opens the scope editor **directly**
+  — no intermediate bar or notification.
+- While the session runs under the option, a small **Edit scope** button
+  sits right next to the access chip in the composer and opens the same
+  editor.
 - The editor walks the directory tree (breadcrumbs up to the filesystem
   root, so you can also grant directories outside the workspace) and toggles
   which directories are included. Checked directories — and everything
@@ -85,17 +88,19 @@ again) so the loader picks up the new plugin row and the client bundle.
 
 1. Open a conversation, click the permission chip in the composer (or run
    `/permission`), and pick **Selected Workspace Write**.
-2. The dock bar appears above the composer. Click **Edit scope**.
-3. Walk the directory tree — the tree starts at the session's workspace, and
-   the breadcrumbs let you navigate up to any parent, so directories outside
-   the workspace can be granted too.
-4. Check the directories the agent may write to. Unchecking a directory
+2. The scope editor opens immediately. Walk the directory tree — the tree
+   starts at the session's workspace, and the breadcrumbs let you navigate
+   up to any parent, so directories outside the workspace can be granted
+   too.
+3. Check the directories the agent may write to. Unchecking a directory
    removes it from the selection; a directory that is only *covered* by a
    checked ancestor shows a "via parent" mark — uncheck the ancestor to
    remove the whole subtree.
-5. **Done**. The agent's next write to a selected directory succeeds without
+4. **Done**. The agent's next write to a selected directory succeeds without
    approval; anything outside the workspace and the selection still needs an
    approval-gated escalation, exactly like `workspace-write`.
+5. Later, reopen the editor with the **Edit scope** button next to the
+   access chip in the composer.
 
 The selection persists per session. Switching the session away from
 Selected Workspace Write keeps the selection stored, so returning to the
@@ -142,4 +147,7 @@ node --test test/core.test.mjs
 ```
 
 `lib/client.js` is a hand-written module-loader bundle (no build step),
-following the same pattern as `dsh-in-convo-mode-change` / `dsh-rewind`.
+following the same pattern as `dsh-in-convo-mode-change` / `dsh-rewind`. It
+requires only `react` and `react-dom` (both shell statics). The editor is
+portaled to `document.body` because the composer seat is sticky inside its
+own stacking context — an in-place fixed overlay would be clipped or buried.
